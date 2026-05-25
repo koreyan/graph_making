@@ -1,73 +1,122 @@
-# React + TypeScript + Vite
+# 🌡️ 반도체 리플로우 온도 프로파일 분석 콘솔 v2.0
+> **Semiconductor Reflow Profile Analyzer v2.0 - User Manual & Technical Guide**
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+본 프로그램은 SMT(Surface Mount Technology) 반도체 패키징 공정에서 솔더 접합부의 신뢰성을 정밀하게 검증하기 위한 **온도 프로파일 시각화 및 자동 연산 분석 도구**입니다. 
+장비로부터 추출한 온도 로그 CSV 데이터를 정규화하여 5대 핵심 공정 구간의 물리 지표를 연산하고, 공정 규격 합격 여부(PASS/FAIL) 판정과 도메인 지식 기반의 처방 가이드를 실시간으로 제공합니다.
 
-Currently, two official plugins are available:
+---
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## 🚀 1. 빠른 시작 (Quick Start - 3단계)
 
-## React Compiler
+프로그램을 처음 다루시는 분들도 아래의 3단계만 따라 하시면 즉시 분석을 수행할 수 있습니다.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+### [1단계] 로컬 개발 서버 접속
+현재 개발 서버가 로컬 환경에서 실행 중입니다. 브라우저를 열고 아래 주소로 접속하십시오.
+- **접속 URL:** `http://localhost:5173` (또는 터미널에 표시된 Vite 로컬 주소)
 
-## Expanding the ESLint configuration
+### [2단계] 샘플 데이터 로드하여 둘러보기
+1. 화면 중앙의 **`샘플 데모 데이터 로드`** 버튼(또는 상단 헤더의 **`Load Sample`** 버튼)을 클릭합니다.
+2. 가상의 리플로우 온도 로그 데이터가 차트에 1초 만에 그려지며, 우측에 종합 분석 스코어 카드가 즉시 나타납니다.
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+### [3단계] 분석 보고서 인쇄 및 PDF 저장
+1. 상단 헤더 우측의 **`PDF Report Print`** (초록색 버튼)을 클릭합니다.
+2. 브라우저의 인쇄 대화 상자가 열리며, 화면상의 어두운 다크 모드 대신 **잉크를 절약하는 깔끔한 고대비 라이트 테마(흰 배경, 검은 글씨)의 A4 1페이지 보고서**가 자동으로 레이아웃되어 인쇄 또는 PDF로 저장할 수 있습니다.
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+---
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+## 🖥️ 2. 핵심 기능 상세 사용법
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+프로그램 화면은 **좌측(설정/입력 콘솔)**, **중앙(차트 및 메타데이터)**, **우측(종합 판정 및 주석 관리)**의 직관적인 **3열 대시보드 레이아웃**으로 구성되어 있습니다.
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  [헤더]  프로그램 타이틀                             [CSV 열기]  [샘플 로드]  [PDF 인쇄]  │
+├───────────────┬─────────────────────────────────────────────┬───────────────┤
+│  [좌측 사이드바]  │  [중앙 메인 패널]                            │  [우측 사이드바]  │
+│  - 규격 프리셋  │  - 장비/일련번호 메타데이터 배너              │  - 종합 합격판정│
+│  - 공정 기본정보│                                             │    (PASS/FAIL)│
+│  - 임계값 입력  │  ┌──────────────────────────────────────┐   │  - 5대 지표 스코어│
+│    (실시간변경) │  │               Highcharts 차트        │   │    (메시지 포함)  │
+│  - 차트 스케일  │  └──────────────────────────────────────┘   │  - 등록 주석 리스트│
+│  - 이미지 저장  │  - 인쇄 전용 5대 지표 결과 상세 표            │  - 주석 수동 입력 │
+└───────────────┴─────────────────────────────────────────────┴───────────────┘
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+### ① CSV 온도 데이터 파일 업로드
+- **드래그 앤 드롭(Drag & Drop):** 탐색기(Finder)에서 `.csv` 확장자를 가진 온도 로그 파일을 브라우저 화면 아무 곳에나 드래그하여 올려놓으면 자동으로 파일이 파싱됩니다.
+- **수동 선택:** 헤더의 **`Open CSV`** 또는 화면 중앙의 **`CSV 파일 불러오기`** 버튼을 클릭하여 파일을 직접 선택할 수도 있습니다.
+- *참고: 본 프로그램은 시간 형식에 `AM/PM` 또는 한글 `오전/오후`가 포함된 데이터를 완벽히 분석하며, 데이터 수집 시 자정(00시)을 넘어 시간이 다시 0초로 돌아가는 롤오버를 자동 감증하여 누적 시간 초 단위로 정규화합니다.*
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+### ② 화학 조성 및 벨트 속도 기입
+- 좌측 사이드바의 **`공정 기본 정보`** 란에 솔더의 화학 조성비(예: `SAC305`, `Sn63/Pb37`)와 컨베이어 벨트 이송 속도(예: `1.2 mm/s`)를 입력할 수 있습니다.
+- 입력된 텍스트는 중앙 Highcharts **차트의 서브 타이틀 영역에 실시간으로 오버레이**되어 표기되며, 인쇄용 공식 보고서 메타데이터에도 자동으로 바인딩됩니다.
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+### ③ 솔더 프리셋 원클릭 바인딩 & 임계값 오버라이드
+- **원클릭 프리셋:** 좌측 최상단의 **`Pb-Free 무연 (SAC305)`** 또는 **`Leaded 유연 (Sn63)`** 버튼을 클릭하면, 각 솔더 성분에 맞는 국제 표준 권장 사양 임계값이 아래 입력 폼에 일괄 자동 적용됩니다.
+- **실시간 오버라이드:** 엔지니어가 개별 소크 구간 온도 범위, 액상선(Liquidus) 온도 및 합격 판정 한계 범위(Min/Max)의 숫자를 키보드로 직접 수정하면, **중앙 차트의 기준 점선과 하이라이트 영역 및 우측 종합 판정 스코어가 0.1초 만에 실시간으로 다시 계산되어 반영**됩니다.
+
+### ④ 차트 줌(Zoom) 및 스케일 모드 토글
+- **Standard 모드:** 가로축 0~480초, 세로축 0~300°C의 고정 배율로 전체 흐름을 일목요연하게 봅니다.
+- **Auto-Fit 동적 리사이즈 모드:** 사용자가 로드한 온도 데이터의 최대 시간과 최대 온도를 측정하여 꽉 차게 자동으로 차트 스크린 배율을 튜닝해 주는 모드입니다.
+- **정밀 드래그 줌:** 마우스로 차트의 특정 영역을 드래그하면 가로축 기준 돋보기 줌인(Zoom-in)이 수행되어 세밀한 그래프의 변화를 관찰할 수 있으며, 줌 해제는 차트 우상단의 `Reset zoom` 버튼을 통해 가능합니다.
+
+### ⑤ 차트 주석(Annotations) 시스템 사용법
+그래프상에서 엔지니어가 특이점이나 불량 발생 영역, 분석 메모를 자유롭게 덧붙일 수 있는 고급 주석 시스템입니다.
+
+- **마우스 클릭으로 추가 (가장 간편한 방법):**
+  1. 차트의 파란색 곡선(TC2 온도선) 위에서 메모를 추가하고 싶은 **임의의 점을 마우스로 클릭**합니다.
+  2. "여기에 표시할 메모를 입력해주세요"라는 팝업창이 나타납니다.
+  3. 내용을 적고 확인을 누르면, 해당 온도/시간 좌표 지점에 말풍선 주석이 즉각 달라붙습니다.
+- **말풍선 드래그 이동:**
+  - 생성된 말풍선 주석은 마우스로 잡고 **자유롭게 상하좌우로 드래그**하여 차트의 선을 가리지 않는 최적의 위치로 배치할 수 있습니다.
+  - *차트를 확대(Zoom)하거나 스케일 모드를 바꿔도 주석의 물리 앵커 핀이 그래프 절대 좌표에 고정되어 있으므로 위치가 뒤틀리거나 어긋나지 않습니다.*
+- **주석 수동 추가:**
+  - 우측 사이드바 최하단의 **`주석 좌표 수동 추가`** 폼에서 시간(초), 온도(°C), 메모 내용을 텍스트로 적고 플러스(`+`) 단추를 눌러도 정확한 좌표에 주석이 부착됩니다.
+- **주석 일괄 확인 및 삭제:**
+  - 우측 하단의 **`등록된 사용자 주석 (Annotations)`** 리스트에 현재 부착된 모든 주석이 정렬되어 표시됩니다.
+  - 리스트 내 개별 주석 우측의 **빨간색 휴지통 아이콘**을 클릭하면 차트 위의 말풍선이 즉각 삭제됩니다.
+
+### ⑥ 보고서 인쇄 및 이미지 고해상도 내보내기
+- **고해상도 이미지 보존:** 좌측 하단의 **`PNG 저장`** 혹은 **`JPEG 저장`** 버튼을 누르면, 리포트 삽입 및 프레젠테이션용으로 적합한 깔끔한 흰색 바탕 테마의 고해상도 차트 이미지 파일이 다운로드 폴더로 자동 저장됩니다.
+- **공식 종이/PDF 보고서 인쇄:** 상단의 **`PDF Report Print`** 버튼을 누르거나 키보드 단축키 `Cmd + P` (윈도우의 경우 `Ctrl + P`)를 누르면 인쇄 미리보기가 뜹니다.
+
+---
+
+## 📈 3. 리플로우 5대 핵심 물리 지표 가이드
+
+본 분석기가 자동으로 계산하는 물리량의 학술적 의미와, 규격 이탈(FAIL) 시 발생할 수 있는 주요 공정 불량에 대한 안내입니다. 
+
+| 공정 핵심 지표 | 분석 범위 / 의미 | 이탈 시 발생 가능 불량 (위험성) |
+| :--- | :--- | :--- |
+| **초기 승온 속도**<br>(Initial Ramp-up) | 상온에서 예열 시작 온도까지의 초당 상승 속도 (권장: **1.0 ~ 3.0°C/s**) | **[초과 시]** 급격한 열팽창 편차로 부품 내부 균열(**Thermal Shock Crack**) 유발, 플럭스 급격 비등으로 솔더 볼(**Solder Balling**) 불량 발생<br>**[미달 시]** 생산성 저하 및 예열 전 플럭스 조기 활성화로 산화막 제거력 약화 |
+| **예열 소크 시간**<br>(Preheat / Soak) | 기판과 부품의 온도차를 없애고 플럭스를 활성화하는 유지 시간 (권장: **60 ~ 120s**) | **[초과 시]** 플럭스 조기 증발/연소(**Flux Exhaustion**)로 패드 산화 불량 유발<br>**[미달 시]** 부품 간 온도 편차(ΔT) 심화로 칩 부품이 수직으로 일어나는 **툼스톤(Tombstone/맨해튼) 현상** 또는 기판 휨 변형 초래 |
+| **리플로우 승온 속도**<br>(Reflow Ramp-up) | 예열 완료 후 용융 최고 피크 온도까지 도달하는 속도 (권장: **1.0 ~ 2.0°C/s**) | **[초과 시]** 급격한 열 충격으로 미세 회로 패턴 뒤틀림 및 세라믹 소자 크랙 발생<br>**[미달 시]** 피크 온도까지 도달 시간이 길어져 열용량이 약한 소자가 고온에 불필요하게 노출 |
+| **액상선 유지 시간**<br>(TAL) | 납이 완전히 녹아 액체 상태로 유지되는 시간 (권장: 무연 **45~90s** / 유연 **60~90s**) | **[초과 시]** 동 패드 계면 사이에서 금속간화합물(IMC) 층이 지나치게 두꺼워져 외부 충격 시 쉽게 접합부가 부러지는 **취성(Brittle Joint) 상태** 유발<br>**[미달 시]** 접합 IMC 결합층 형성 부족으로 외부 진동에 납땜이 쉽게 떨어지는 **냉납(Cold Joint)** 이나 비젖음 결함 유발 |
+| **최고 피크 온도**<br>(Peak Temp) | 프로파일 상에서 측정된 최고의 열 충격점 (권장: 무연 **235~250°C** / 유연 **210~230°C**) | **[초과 시]** 소자 패키징 몰딩 탄화 및 연소, 칩 내부 박리(**Delamination**), 실리콘 반도체 소자 영구 파괴<br>**[미달 시]** 솔더 페이스트가 완전히 융해(Melting)되지 못해 접합력이 극도로 낮은 불완전 융해 유발 |
+| **하강 냉각 속도**<br>(Cooling Rate) | 피크 온도 도달 후 100°C 또는 종단점까지의 하강 기울기 (권장: **-4.0 ~ -1.0°C/s**) | **[초과 시]** 기판(FR4)과 세라믹 소자 간의 급격한 열수축 편차로 솔더 조인트 본체에 **미세 크랙** 유발<br>**[미달 시]** 응고 시 주석 결정 조대화(**Grain Coarsening**) 현상으로 내부 조직이 거칠어지고 수명이 대폭 단축됨 |
+
+---
+
+## ❓ 4. 자주 묻는 질문 & 문제 해결 (FAQ)
+
+### Q. 화면은 다크 모드인데, PDF 인쇄 버튼을 누르면 왜 라이트 테마로 바뀌나요?
+- **A:** 다크 모드 화면 그대로 인쇄를 진행하게 되면 **막대한 프린터 토너/잉크가 낭비**되고, A4 용지가 젖어 우그러들며, 표의 작은 글씨들이 번져 가독성이 극도로 떨어지는 현상이 발생합니다. 
+- 이를 방지하기 위해 프로그램에 **인쇄 감지 지능형 훅**이 탑재되어 있습니다. `Cmd+P`를 누르는 찰나에 Highcharts의 배경색을 순백색으로, 선을 선명한 검은색 눈금으로 0.01초 만에 자동 전환하며, 인쇄 대화 상자를 닫으면 원래의 세련된 다크 Neon UI로 즉시 복귀하므로 안심하고 인쇄하셔도 좋습니다.
+
+### Q. CSV 파일을 올렸는데 파싱이 실패했다고 경고가 뜹니다.
+- **A:** CSV 데이터의 첫 열들이 장비의 메타데이터 정보 행(기기 이름, 설명 등)으로 채워져 있고, 실제 시계열 데이터가 시작하는 행에는 **`날짜`** 또는 **`Date`**라는 글자로 헤더가 시작해야 합니다.
+- 만약 장비에서 커스텀하게 수정한 CSV 파일이라 이 헤더 선언부가 누락되었거나 데이터 컬럼이 4개 미만인 경우 파싱 오류가 발생할 수 있습니다. 동봉된 `T15168 MultiChannel.csv` 또는 `TEST_REFLOW_DATA.csv` 파일의 내부 양식을 열어 참고해 보시기 바랍니다.
+
+### Q. 차트 배율을 너무 줌인해서 원래대로 돌아가기 어렵습니다.
+- **A:** 마우스로 줌인을 한 뒤 차트 우측 상단을 보시면 아주 작게 **`Reset zoom`**이라는 회색 버튼이 나타납니다. 이 버튼을 클릭하시면 1초 만에 원래의 0~480초 표준 배율로 복원됩니다.
+
+---
+
+## 🛠️ 5. 개발자용 시스템 아키텍처 및 유지보수
+만약 추가 개발을 하거나 공정 상의 코드를 변경하고자 하는 엔지니어를 위한 구성 파일 요약입니다.
+
+- `src/utils/csvParser.ts`: CSV 파일을 PapaParse로 분석하고, 기기 메타데이터와 AM/PM 시간대를 누적 초로 정규화하는 모듈입니다.
+- `src/utils/reflowAnalyzer.ts`: 5대 핵심 물리 지표 및 냉각 속도를 연산하고, 합격 스펙 한계를 동적으로 판정하는 분석 코어입니다.
+- `src/components/ReflowChart.tsx`: Highcharts React 컴포넌트 래퍼로, 클릭 이벤트 기반 주석 생성, 핀 드래그 리스너, 구간 하이라이트 배경(Plot bands)을 관장합니다.
+- `src/App.tsx`: 사용자의 모든 임계 입력값 상태, 주석 데이터 일괄 관리, 프린터 리스너 훅을 조율하는 메인 콘솔 프레임입니다.
+- `src/index.css`: 프리미엄 다크 네온 모드 CSS 디자인 토큰 및 `@media print` 라이트 포맷 규칙이 작성되어 있습니다.
