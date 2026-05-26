@@ -135,49 +135,49 @@ const ReflowChart: React.FC<ReflowChartProps> = ({
         {
           from: 0,
           to: soakStartTime,
-          color: 'rgba(59, 130, 246, 0.03)', // Soft blue for initial ramp-up
+          color: 'rgba(59, 130, 246, 0.1)', // Soft blue for initial ramp-up
           label: {
             text: '초기 승온 (Ramp-Up)',
             align: 'center',
             verticalAlign: 'bottom',
             y: -15,
-            style: { color: 'rgba(255, 255, 255, 0.35)', fontSize: '10px', fontWeight: 'bold' }
+            style: { color: 'rgba(255, 255, 255, 0.45)', fontSize: '10px', fontWeight: 'bold' }
           }
         },
         {
           from: soakStartTime,
           to: soakEndTime,
-          color: 'rgba(245, 158, 11, 0.03)', // Warm orange for soak preheat
+          color: 'rgba(245, 158, 11, 0.1)', // Warm orange for soak preheat
           label: {
             text: '예열 소크 (Preheat & Soak)',
             align: 'center',
             verticalAlign: 'bottom',
             y: -15,
-            style: { color: 'rgba(255, 255, 255, 0.35)', fontSize: '10px', fontWeight: 'bold' }
+            style: { color: 'rgba(255, 255, 255, 0.45)', fontSize: '10px', fontWeight: 'bold' }
           }
         },
         {
           from: soakEndTime,
           to: reflowEndTime,
-          color: 'rgba(239, 68, 68, 0.04)', // Hot red for Reflow TAL
+          color: 'rgba(239, 68, 68, 0.12)', // Hot red for Reflow TAL
           label: {
             text: '리플로우 피크 (Reflow & Peak)',
             align: 'center',
             verticalAlign: 'bottom',
             y: -15,
-            style: { color: 'rgba(255, 255, 255, 0.35)', fontSize: '10px', fontWeight: 'bold' }
+            style: { color: 'rgba(255, 255, 255, 0.45)', fontSize: '10px', fontWeight: 'bold' }
           }
         },
         {
           from: reflowEndTime,
           to: endTime,
-          color: 'rgba(16, 185, 129, 0.02)', // Clean green for cooling
+          color: 'rgba(16, 185, 129, 0.08)', // Clean green for cooling
           label: {
             text: '하강 냉각 (Cooling)',
             align: 'center',
             verticalAlign: 'bottom',
             y: -15,
-            style: { color: 'rgba(255, 255, 255, 0.35)', fontSize: '10px', fontWeight: 'bold' }
+            style: { color: 'rgba(255, 255, 255, 0.45)', fontSize: '10px', fontWeight: 'bold' }
           }
         }
       );
@@ -235,6 +235,18 @@ const ReflowChart: React.FC<ReflowChartProps> = ({
         min: 0,
         max: yAxisMax,
         plotLines: [
+          {
+            value: 250,
+            color: 'rgba(255, 255, 255, 0.75)',
+            dashStyle: 'Dash',
+            width: 2,
+            label: {
+              text: 'Max Temp Limit (250°C)',
+              style: { color: '#ffffff', fontWeight: 'bold', fontSize: '9px' },
+              align: 'right',
+              x: -10
+            }
+          },
           {
             value: customThresholds.liquidusTemp,
             color: 'rgba(239, 68, 68, 0.75)',

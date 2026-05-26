@@ -60,9 +60,9 @@ export const parseTimeToSeconds = (timeStr: string): number => {
   return hours * 3600 + minutes * 60 + seconds;
 };
 
-export const parseCSV = (file: File): Promise<{ data: ReflowDataPoint[], meta: ReflowMetaData }> => {
+export const parseCSV = (fileOrString: File | string): Promise<{ data: ReflowDataPoint[], meta: ReflowMetaData }> => {
   return new Promise((resolve, reject) => {
-    Papa.parse(file, {
+    Papa.parse(fileOrString as any, {
       complete: (results) => {
         const rows = results.data as string[][];
         if (rows.length < 5) {

@@ -1,6 +1,8 @@
-import { app, BrowserWindow, shell } from 'electron';
+import { app, BrowserWindow, shell, ipcMain, dialog } from 'electron';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import * as XLSX from 'xlsx';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -30,6 +32,7 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      preload: path.join(__dirname, 'preload.mjs'),
     },
     // Frameless is optional — remove these lines to keep the native OS titlebar
     show: false,
@@ -76,4 +79,73 @@ app.on('activate', () => {
   }
 });
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  ipcMain.handle('get-csv-files', async () => {
+    const dirPath = process.env.REFLOW_CSV_DIR;
+    if (!dirPath) {
+      return { error: 'REFLOW_CSV_DIR 환경변수가 설정되지 않았습니다.' };
+    }
+    try {
+      const files = fs.readdirSync(dirPath);
+      const csvFiles = files.filter(f => f.toLowerCase().endsWith('.csv')).map(f => ({
+        name: f,
+        path: path.join(dirPath, f)
+      }));
+      return { files: csvFiles };
+    } catch (err: any) {
+      return { error: err.message };
+    }
+  });
+
+  ipcMain.handle('read-csv-file', async (_, filepath: string) => {
+    try {
+      if (filepath.toLowerCase().endsWith('.xlsx')) {
+        const workbook = XLSX.readFile(filepath);
+        const sheetName = workbook.SheetNames[0];
+        const csvContent = XLSX.utils.sheet_to_csv(workbook.Sheets[sheetName]);
+        return { content: csvContent };
+      }
+
+      let content = fs.readFileSync(filepath, 'utf-8');
+      
+      // 윈도우(한국) 엑셀에서 저장된 CSV는 기본 인코딩이 ANSI(CP949)이므로
+      // UTF-8로 읽었을 때 한글이 깨지는 현상( 문자 발생)이 있으면 EUC-KR로 재디코딩합니다.
+      if (content.includes('')) {
+        const buffer = fs.readFileSync(filepath);
+        content = new TextDecoder('euc-kr').decode(buffer);
+      }
+      
+      return { content };
+    } catch (err: any) {
+      return { error: err.message };
+    }
+  });
+
+  ipcMain.handle('select-csv-directory', async (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!window) return { error: 'No window found' };
+
+    const { canceled, filePaths } = await dialog.showOpenDialog(window, {
+      title: 'CSV 디렉터리 선택',
+      properties: ['openDirectory']
+    });
+
+    if (canceled || filePaths.length === 0) {
+      return { canceled: true };
+    }
+
+    const dirPath = filePaths[0];
+    try {
+      const files = fs.readdirSync(dirPath);
+      const csvFiles = files.filter(f => f.toLowerCase().endsWith('.csv') || f.toLowerCase().endsWith('.xlsx')).map(f => ({
+        name: f,
+        path: path.join(dirPath, f)
+      }));
+      return { dirPath, files: csvFiles };
+    } catch (err: any) {
+      return { error: err.message };
+    }
+  });
+
+  createWindow();
+});

@@ -11,7 +11,8 @@ import {
   Trash2,
   Plus,
   FileSpreadsheet,
-  Printer
+  Printer,
+  FolderOpen
 } from 'lucide-react';
 import Highcharts from 'highcharts/highstock';
 import AnnotationsModule from 'highcharts/modules/annotations';
@@ -23,6 +24,8 @@ import { generateMockReflowData } from './utils/mockData';
 import { analyzeReflowProfile, THRESHOLDS } from './utils/reflowAnalyzer';
 import type { SolderType, SolderThresholds } from './utils/reflowAnalyzer';
 import ReflowChart from './components/ReflowChart';
+import html2canvas from 'html2canvas';
+import { jsPDF } from 'jspdf';
 import './index.css';
 
 // Initialize Highcharts modules
@@ -66,6 +69,11 @@ const App: React.FC = () => {
   const [data, setData] = useState<ReflowDataPoint[]>([]);
   const [meta, setMeta] = useState<ReflowMetaData | null>(null);
   const [solderType, setSolderType] = useState<SolderType>('pb-free');
+  
+  // Tabs and File List state
+  const [activeLeftTab, setActiveLeftTab] = useState<'settings' | 'files'>('files');
+  const [csvFileList, setCsvFileList] = useState<{name: string, path: string}[]>([]);
+  const [currentDirPath, setCurrentDirPath] = useState<string | null>(null);
   
   // Custom process conditions
   const [solderComposition, setSolderComposition] = useState<string>('SAC305');
@@ -173,15 +181,25 @@ const App: React.FC = () => {
     ]);
   };
 
-  // Handle uploaded CSV file
+  // Handle uploaded file (CSV or XLSX)
   const handleFileUpload = useCallback(async (file: File) => {
     try {
-      const result = await parseCSV(file);
+      let contentToParse: File | string = file;
+      
+      if (window.electronAPI && (file as any).path) {
+        const res = await window.electronAPI.readCsvFile((file as any).path);
+        if (res.error) throw new Error(res.error);
+        if (res.content) contentToParse = res.content;
+      } else if (file.name.toLowerCase().endsWith('.xlsx')) {
+        throw new Error('웹 브라우저 단독 환경에서는 .xlsx 파일을 파싱할 수 없습니다. 데스크톱 앱을 사용해주세요.');
+      }
+
+      const result = await parseCSV(contentToParse);
       setData(result.data);
       setMeta(result.meta);
       setCustomAnnotations([]); // clear old custom annotations
     } catch (error) {
-      alert('CSV 파싱 에러: ' + (error instanceof Error ? error.message : '알 수 없는 형식입니다.'));
+      alert('데이터 파싱 에러: ' + (error instanceof Error ? error.message : '알 수 없는 형식입니다.'));
     }
   }, []);
 
@@ -190,10 +208,10 @@ const App: React.FC = () => {
     e.preventDefault();
     setIsDragging(false);
     const file = e.dataTransfer.files[0];
-    if (file && file.name.endsWith('.csv')) {
+    if (file && (file.name.toLowerCase().endsWith('.csv') || file.name.toLowerCase().endsWith('.xlsx'))) {
       handleFileUpload(file);
     } else {
-      alert('.csv 형식의 파일만 드롭할 수 있습니다.');
+      alert('.csv 또는 .xlsx 형식의 데이터 파일만 드롭할 수 있습니다.');
     }
   }, [handleFileUpload]);
 
@@ -254,6 +272,57 @@ const App: React.FC = () => {
     setCustomAnnotations(prev => prev.filter(ann => ann.id !== id));
   };
 
+  // Fetch CSV files from env directory on mount
+  useEffect(() => {
+    if (window.electronAPI) {
+      window.electronAPI.getCsvFiles().then(res => {
+        if (res.files) {
+          setCsvFileList(res.files);
+        } else if (res.error) {
+          console.error('Failed to load CSV files:', res.error);
+        }
+      });
+    }
+  }, []);
+
+  const handleSelectDirectory = async () => {
+    if (!window.electronAPI) return;
+    try {
+      const res = await window.electronAPI.selectCsvDirectory();
+      if (res.canceled) return;
+      if (res.error) {
+        alert('디렉터리 읽기 오류: ' + res.error);
+        return;
+      }
+      if (res.files && res.dirPath) {
+        setCurrentDirPath(res.dirPath);
+        setCsvFileList(res.files);
+      }
+    } catch (error) {
+      alert('오류 발생: ' + (error instanceof Error ? error.message : '알 수 없는 오류'));
+    }
+  };
+
+  // Handle clicking a file from the list
+  const handleFileItemClick = async (path: string) => {
+    if (!window.electronAPI) return;
+    try {
+      const res = await window.electronAPI.readCsvFile(path);
+      if (res.error) {
+        alert('파일 읽기 오류: ' + res.error);
+        return;
+      }
+      if (res.content) {
+        const result = await parseCSV(res.content);
+        setData(result.data);
+        setMeta(result.meta);
+        setCustomAnnotations([]);
+      }
+    } catch (error) {
+      alert('CSV 파싱 에러: ' + (error instanceof Error ? error.message : '알 수 없는 형식입니다.'));
+    }
+  };
+
   // Export Highcharts as local PNG or JPEG
   const handleExport = (format: 'image/png' | 'image/jpeg') => {
     const activeChart = Highcharts.charts.find(c => c !== undefined);
@@ -288,8 +357,102 @@ const App: React.FC = () => {
   };
 
   // Print PDF report triggering
-  const handlePrint = () => {
-    window.print();
+  const handlePrint = async () => {
+    // 1. Prepare print styles dynamically to bypass media query limitations of html2canvas
+    let printStyles = '';
+    try {
+      for (const sheet of Array.from(document.styleSheets)) {
+        try {
+          for (const rule of Array.from(sheet.cssRules)) {
+            if (rule.constructor.name === 'CSSMediaRule' && (rule as CSSMediaRule).conditionText === 'print') {
+              for (const mediaRule of Array.from((rule as CSSMediaRule).cssRules)) {
+                printStyles += mediaRule.cssText + '\n';
+              }
+            }
+          }
+        } catch(e) {}
+      }
+    } catch (e) {
+      console.warn("Could not read stylesheets for print export", e);
+    }
+    
+    const styleEl = document.createElement("style");
+    styleEl.id = "temp-print-styles";
+    styleEl.innerHTML = printStyles;
+    // Also explicitly force hide sidebars and controls
+    styleEl.innerHTML += `
+      header, .screen-only, .left-sidebar, .right-sidebar, .controls, button { display: none !important; }
+      .center-panel { width: 100% !important; max-width: 100% !important; background: #fff !important; }
+      .graph-section { width: 100% !important; max-width: 100% !important; background: #fff !important; }
+    `;
+    document.head.appendChild(styleEl);
+
+    // 2. Adjust chart colors for light mode
+    const activeChart = Highcharts.charts.find(c => c !== undefined);
+    if (activeChart) {
+      activeChart.update({
+        chart: { backgroundColor: '#ffffff' },
+        title: { style: { color: '#000000', fontWeight: 'bold' } },
+        subtitle: { style: { color: '#333333' } },
+        xAxis: {
+          gridLineColor: 'rgba(0, 0, 0, 0.08)',
+          labels: { style: { color: '#333333' } },
+          title: { style: { color: '#333333' } }
+        },
+        yAxis: {
+          gridLineColor: 'rgba(0, 0, 0, 0.08)',
+          labels: { style: { color: '#333333' } },
+          title: { style: { color: '#333333' } }
+        }
+      }, true);
+    }
+
+    // 3. Wait for render
+    await new Promise(resolve => setTimeout(resolve, 800));
+
+    // 4. Capture and Export
+    const element = document.querySelector('.workspace-console') as HTMLElement;
+    if (element) {
+      const origWidth = element.style.width;
+      element.style.width = '1200px'; // Fixed width for A4 landscape ratio
+      
+      try {
+        const canvas = await html2canvas(element, { scale: 2, useCORS: true, backgroundColor: '#ffffff' });
+        const imgData = canvas.toDataURL('image/png');
+        
+        const pdf = new jsPDF('l', 'mm', 'a4');
+        const pdfWidth = pdf.internal.pageSize.getWidth();
+        const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+        
+        pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+        pdf.save(`Reflow_Report_${meta?.serialNumber || 'Data'}.pdf`);
+      } catch (err) {
+        console.error("PDF Export Error: ", err);
+        alert("PDF 생성 중 오류가 발생했습니다.");
+      } finally {
+        element.style.width = origWidth;
+      }
+    }
+
+    // 5. Cleanup
+    document.head.removeChild(styleEl);
+    if (activeChart) {
+      activeChart.update({
+        chart: { backgroundColor: '#16161a' },
+        title: { style: { color: '#ffffff', fontWeight: 'bold' } },
+        subtitle: { style: { color: '#9ca3af' } },
+        xAxis: {
+          gridLineColor: 'rgba(255, 255, 255, 0.04)',
+          labels: { style: { color: '#9ca3af' } },
+          title: { style: { color: '#9ca3af' } }
+        },
+        yAxis: {
+          gridLineColor: 'rgba(255, 255, 255, 0.04)',
+          labels: { style: { color: '#9ca3af' } },
+          title: { style: { color: '#9ca3af' } }
+        }
+      }, true);
+    }
   };
 
   // Dynamic print listeners to toggle Highcharts colors automatically for ink saving
@@ -385,280 +548,372 @@ const App: React.FC = () => {
         {/* Drag & Drop Overlay */}
         <div className={`drop-zone ${isDragging ? 'active' : ''}`}>
           <Upload size={48} color="#3b82f6" />
-          <p>여기에 리플로우 CSV 온도 파일을 드롭하세요</p>
+          <p>여기에 온도 데이터 파일(.csv, .xlsx)을 드롭하세요</p>
         </div>
 
-        {data.length > 0 ? (
-          <div className="workspace-console">
-            
-            {/* COLUMN 1: LEFT SIDEBAR (Controls & Form - Screen Only) */}
-            <div className="left-sidebar screen-only">
+        <div className="workspace-console" style={{ gridTemplateColumns: data.length > 0 ? '310px 1fr 360px' : '310px 1fr' }}>
+          
+          {/* COLUMN 1: LEFT SIDEBAR (Controls & Form - Screen Only) */}
+          <div className="left-sidebar screen-only">
               
-              {/* Preset Selector */}
-              <div className="panel-card">
-                <div className="panel-label">솔더 표준 규격 프리셋</div>
-                <div className="preset-grid">
-                  <button 
-                    className={`preset-btn ${solderType === 'pb-free' ? 'active' : ''}`}
-                    onClick={() => handlePresetSelect('pb-free')}
-                  >
-                    Pb-Free 무연 (SAC305)
-                  </button>
-                  <button 
-                    className={`preset-btn ${solderType === 'leaded' ? 'active' : ''}`}
-                    onClick={() => handlePresetSelect('leaded')}
-                  >
-                    Leaded 유연 (Sn63)
-                  </button>
-                </div>
+              <div className="sidebar-tabs">
+                <button 
+                  className={`tab-btn ${activeLeftTab === 'settings' ? 'active' : ''}`}
+                  onClick={() => setActiveLeftTab('settings')}
+                >
+                  환경 설정
+                </button>
+                <button 
+                  className={`tab-btn ${activeLeftTab === 'files' ? 'active' : ''}`}
+                  onClick={() => setActiveLeftTab('files')}
+                >
+                  파일 리스트
+                </button>
               </div>
 
-              {/* Solder / Conveyor Details */}
-              <div className="panel-card">
-                <div className="panel-label">공정 기본 정보</div>
-                <div className="form-group">
-                  <label>솔더 화학 조성비 명칭</label>
-                  <input 
-                    type="text" 
-                    value={solderComposition} 
-                    onChange={(e) => setSolderComposition(e.target.value)}
-                    placeholder="예: Sn 96.5 / Ag 3.0 / Cu 0.5"
-                  />
-                </div>
-                <div className="form-group">
-                  <label>컨베이어 이송 속도</label>
-                  <input 
-                    type="text" 
-                    value={conveyorSpeed} 
-                    onChange={(e) => setConveyorSpeed(e.target.value)}
-                    placeholder="예: 1.2 mm/s"
-                  />
-                </div>
-              </div>
+              {activeLeftTab === 'settings' ? (
+                <>
+                  {/* Preset Selector */}
+                  <div className="panel-card">
+                    <div className="panel-label">솔더 표준 규격 프리셋</div>
+                    <div className="preset-grid">
+                      <button 
+                        className={`preset-btn ${solderType === 'pb-free' ? 'active' : ''}`}
+                        onClick={() => handlePresetSelect('pb-free')}
+                      >
+                        Pb-Free 무연 (SAC305)
+                      </button>
+                      <button 
+                        className={`preset-btn ${solderType === 'leaded' ? 'active' : ''}`}
+                        onClick={() => handlePresetSelect('leaded')}
+                      >
+                        Leaded 유연 (Sn63)
+                      </button>
+                    </div>
+                  </div>
 
-              {/* Reflow Chamber Zone Temperatures */}
-              <div className="panel-card">
-                <div className="panel-label">리플로우 챔버 설정 온도 (Zone Temps)</div>
-                {[1, 2, 3, 4].map(zoneNum => {
-                  const topKey = `z${zoneNum}Top` as keyof ZoneTemperatures;
-                  const botKey = `z${zoneNum}Bot` as keyof ZoneTemperatures;
-                  const zoneName = zoneNum === 1 ? 'Preheat (예열)' : 
-                                   zoneNum === 2 ? 'Soak (소크)' : 
-                                   zoneNum === 3 ? 'Reflow (리플로우)' : 'Cooling (냉각)';
-                  return (
-                    <div key={zoneNum} style={{ marginBottom: '10px' }}>
-                      <div style={{ fontSize: '0.78rem', fontWeight: 600, color: '#3b82f6', marginBottom: '4px' }}>
-                        Zone {zoneNum} - {zoneName}
+                  {/* Solder / Conveyor Details */}
+                  <div className="panel-card">
+                    <div className="panel-label">공정 기본 정보</div>
+                    <div className="form-group">
+                      <label>솔더 화학 조성비 명칭</label>
+                      <input 
+                        type="text" 
+                        value={solderComposition} 
+                        onChange={(e) => setSolderComposition(e.target.value)}
+                        placeholder="예: Sn 96.5 / Ag 3.0 / Cu 0.5"
+                      />
+                    </div>
+                    <div className="form-group">
+                      <label>컨베이어 이송 속도</label>
+                      <input 
+                        type="text" 
+                        value={conveyorSpeed} 
+                        onChange={(e) => setConveyorSpeed(e.target.value)}
+                        placeholder="예: 1.2 mm/s"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Reflow Chamber Zone Temperatures */}
+                  <div className="panel-card">
+                    <div className="panel-label">리플로우 챔버 설정 온도 (Zone Temps)</div>
+                    {[1, 2, 3, 4].map(zoneNum => {
+                      const topKey = `z${zoneNum}Top` as keyof ZoneTemperatures;
+                      const botKey = `z${zoneNum}Bot` as keyof ZoneTemperatures;
+                      const zoneName = zoneNum === 1 ? 'Preheat (예열)' : 
+                                      zoneNum === 2 ? 'Soak (소크)' : 
+                                      zoneNum === 3 ? 'Reflow (리플로우)' : 'Cooling (냉각)';
+                      return (
+                        <div key={zoneNum} style={{ marginBottom: '10px' }}>
+                          <div style={{ fontSize: '0.78rem', fontWeight: 600, color: '#3b82f6', marginBottom: '4px' }}>
+                            Zone {zoneNum} - {zoneName}
+                          </div>
+                          <div className="form-row">
+                            <div className="form-group">
+                              <label>상부 (Top, °C)</label>
+                              <input 
+                                type="number" 
+                                value={zoneTemps[topKey]} 
+                                onChange={(e) => handleZoneTempChange(topKey, e.target.value)}
+                              />
+                            </div>
+                            <div className="form-group">
+                              <label>하부 (Bot, °C)</label>
+                              <input 
+                                type="number" 
+                                value={zoneTemps[botKey]} 
+                                onChange={(e) => handleZoneTempChange(botKey, e.target.value)}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Dynamic Parameter Overrides */}
+                  <div className="panel-card">
+                    <div className="panel-label">공정 구간 임계값 오버라이드</div>
+                    
+                    <div className="form-row">
+                      <div className="form-group">
+                        <label>Soak Start (°C)</label>
+                        <input 
+                          type="number" 
+                          value={customThresholds.soakStartTemp} 
+                          onChange={(e) => handleThresholdChange('soakStartTemp', e.target.value)}
+                        />
                       </div>
-                      <div className="form-row">
-                        <div className="form-group">
-                          <label>상부 (Top, °C)</label>
-                          <input 
-                            type="number" 
-                            value={zoneTemps[topKey]} 
-                            onChange={(e) => handleZoneTempChange(topKey, e.target.value)}
-                          />
-                        </div>
-                        <div className="form-group">
-                          <label>하부 (Bot, °C)</label>
-                          <input 
-                            type="number" 
-                            value={zoneTemps[botKey]} 
-                            onChange={(e) => handleZoneTempChange(botKey, e.target.value)}
-                          />
-                        </div>
+                      <div className="form-group">
+                        <label>Soak End (°C)</label>
+                        <input 
+                          type="number" 
+                          value={customThresholds.soakEndTemp} 
+                          onChange={(e) => handleThresholdChange('soakEndTemp', e.target.value)}
+                        />
                       </div>
                     </div>
-                  );
-                })}
-              </div>
 
-              {/* Dynamic Parameter Overrides */}
-              <div className="panel-card">
-                <div className="panel-label">공정 구간 임계값 오버라이드</div>
-                
-                <div className="form-row">
-                  <div className="form-group">
-                    <label>Soak Start (°C)</label>
-                    <input 
-                      type="number" 
-                      value={customThresholds.soakStartTemp} 
-                      onChange={(e) => handleThresholdChange('soakStartTemp', e.target.value)}
-                    />
+                    <div className="form-group">
+                      <label>Liquidus Temp (°C)</label>
+                      <input 
+                        type="number" 
+                        value={customThresholds.liquidusTemp} 
+                        onChange={(e) => handleThresholdChange('liquidusTemp', e.target.value)}
+                      />
+                    </div>
+
+                    <div className="panel-divider">Spec Range</div>
+
+                    <div className="form-row">
+                      <div className="form-group">
+                        <label>Initial Ramp-up Min (°C/s)</label>
+                        <input 
+                          type="number" step="0.1"
+                          value={customThresholds.rampUpMin} 
+                          onChange={(e) => handleThresholdChange('rampUpMin', e.target.value)}
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label>Initial Ramp-up Max (°C/s)</label>
+                        <input 
+                          type="number" step="0.1"
+                          value={customThresholds.rampUpMax} 
+                          onChange={(e) => handleThresholdChange('rampUpMax', e.target.value)}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="form-row">
+                      <div className="form-group">
+                        <label>Initial Ramp-up Time Min (s)</label>
+                        <input 
+                          type="number" 
+                          value={customThresholds.rampUpTimeMin} 
+                          onChange={(e) => handleThresholdChange('rampUpTimeMin', e.target.value)}
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label>Initial Ramp-up Time Max (s)</label>
+                        <input 
+                          type="number" 
+                          value={customThresholds.rampUpTimeMax} 
+                          onChange={(e) => handleThresholdChange('rampUpTimeMax', e.target.value)}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="form-row">
+                      <div className="form-group">
+                        <label>Soak Duration Min (s)</label>
+                        <input 
+                          type="number" 
+                          value={customThresholds.soakDurationMin} 
+                          onChange={(e) => handleThresholdChange('soakDurationMin', e.target.value)}
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label>Soak Duration Max (s)</label>
+                        <input 
+                          type="number" 
+                          value={customThresholds.soakDurationMax} 
+                          onChange={(e) => handleThresholdChange('soakDurationMax', e.target.value)}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="form-row">
+                      <div className="form-group">
+                        <label>Reflow Ramp-up Min (°C/s)</label>
+                        <input 
+                          type="number" step="0.1"
+                          value={customThresholds.reflowRampUpMin} 
+                          onChange={(e) => handleThresholdChange('reflowRampUpMin', e.target.value)}
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label>Reflow Ramp-up Max (°C/s)</label>
+                        <input 
+                          type="number" step="0.1"
+                          value={customThresholds.reflowRampUpMax} 
+                          onChange={(e) => handleThresholdChange('reflowRampUpMax', e.target.value)}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="form-row">
+                      <div className="form-group">
+                        <label>TAL Duration Min (s)</label>
+                        <input 
+                          type="number" 
+                          value={customThresholds.talMin} 
+                          onChange={(e) => handleThresholdChange('talMin', e.target.value)}
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label>TAL Duration Max (s)</label>
+                        <input 
+                          type="number" 
+                          value={customThresholds.talMax} 
+                          onChange={(e) => handleThresholdChange('talMax', e.target.value)}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="form-row">
+                      <div className="form-group">
+                        <label>Peak Temp Min (°C)</label>
+                        <input 
+                          type="number" 
+                          value={customThresholds.peakTempMin} 
+                          onChange={(e) => handleThresholdChange('peakTempMin', e.target.value)}
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label>Peak Temp Max (°C)</label>
+                        <input 
+                          type="number" 
+                          value={customThresholds.peakTempMax} 
+                          onChange={(e) => handleThresholdChange('peakTempMax', e.target.value)}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="form-row">
+                      <div className="form-group">
+                        <label>Time at Peak Min (s)</label>
+                        <input 
+                          type="number" 
+                          value={customThresholds.timeAtPeakMin} 
+                          onChange={(e) => handleThresholdChange('timeAtPeakMin', e.target.value)}
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label>Time at Peak Max (s)</label>
+                        <input 
+                          type="number" 
+                          value={customThresholds.timeAtPeakMax} 
+                          onChange={(e) => handleThresholdChange('timeAtPeakMax', e.target.value)}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="form-row">
+                      <div className="form-group">
+                        <label>Cooling Rate Min (°C/s)</label>
+                        <input 
+                          type="number" step="0.1"
+                          value={customThresholds.coolingMin} 
+                          onChange={(e) => handleThresholdChange('coolingMin', e.target.value)}
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label>Cooling Rate Max (°C/s)</label>
+                        <input 
+                          type="number" step="0.1"
+                          value={customThresholds.coolingMax} 
+                          onChange={(e) => handleThresholdChange('coolingMax', e.target.value)}
+                        />
+                      </div>
+                    </div>
                   </div>
-                  <div className="form-group">
-                    <label>Soak End (°C)</label>
-                    <input 
-                      type="number" 
-                      value={customThresholds.soakEndTemp} 
-                      onChange={(e) => handleThresholdChange('soakEndTemp', e.target.value)}
-                    />
+
+                  {/* Scale Mode */}
+                  <div className="panel-card">
+                    <div className="panel-label">차트 축 스케일 모드</div>
+                    <div className="scale-switcher">
+                      <button 
+                        className={scaleMode === 'standard' ? 'active' : ''} 
+                        onClick={() => setScaleMode('standard')}
+                      >
+                        Standard (0~480s / 300°C)
+                      </button>
+                      <button 
+                        className={scaleMode === 'auto-fit' ? 'active' : ''} 
+                        onClick={() => setScaleMode('auto-fit')}
+                      >
+                        Auto-Fit 동적 리사이즈
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Export Panel */}
+                  <div className="panel-card">
+                    <div className="panel-label">차트 이미지 고화질 내보내기</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                      <button onClick={() => handleExport('image/png')} className="icon-btn">
+                        <Download size={13} style={{ marginRight: 4 }} />
+                        PNG 저장
+                      </button>
+                      <button onClick={() => handleExport('image/jpeg')} className="icon-btn">
+                        <Download size={13} style={{ marginRight: 4 }} />
+                        JPEG 저장
+                      </button>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="panel-card" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+                  <div className="panel-label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>데이터 파일 목록 (.csv, .xlsx)</span>
+                    <button onClick={handleSelectDirectory} className="icon-btn" style={{ padding: '4px 8px', fontSize: '0.7rem', height: 'auto', backgroundColor: '#24242b', border: '1px solid rgba(255,255,255,0.1)' }}>
+                      <FolderOpen size={12} style={{ marginRight: 4 }} />
+                      폴더 선택
+                    </button>
+                  </div>
+                  {currentDirPath && (
+                    <div style={{ fontSize: '0.65rem', color: '#9ca3af', marginBottom: '8px', wordBreak: 'break-all', backgroundColor: 'rgba(0,0,0,0.2)', padding: '4px', borderRadius: '4px' }}>
+                      경로: {currentDirPath}
+                    </div>
+                  )}
+                  <div className="file-list-container" style={{ flex: 1, overflowY: 'auto' }}>
+                    {csvFileList.length === 0 ? (
+                      <div className="empty-annotations-alert">
+                        데이터 파일이 없습니다.<br/>
+                        상단의 <b>[폴더 선택]</b> 버튼을 눌러 데이터가 있는 디렉터리를 지정해주세요.
+                      </div>
+                    ) : (
+                      csvFileList.map((file, idx) => (
+                        <div 
+                          key={idx} 
+                          className="file-list-item"
+                          onClick={() => handleFileItemClick(file.path)}
+                        >
+                          <FileSpreadsheet size={14} style={{ marginRight: '6px', color: '#3b82f6', flexShrink: 0 }} />
+                          <span className="file-name" title={file.name}>{file.name}</span>
+                        </div>
+                      ))
+                    )}
                   </div>
                 </div>
-
-                <div className="form-group">
-                  <label>Liquidus Temp (°C)</label>
-                  <input 
-                    type="number" 
-                    value={customThresholds.liquidusTemp} 
-                    onChange={(e) => handleThresholdChange('liquidusTemp', e.target.value)}
-                  />
-                </div>
-
-                <div className="panel-divider">Spec Range</div>
-
-                <div className="form-row">
-                  <div className="form-group">
-                    <label>Initial Ramp-up Min (°C/s)</label>
-                    <input 
-                      type="number" step="0.1"
-                      value={customThresholds.rampUpMin} 
-                      onChange={(e) => handleThresholdChange('rampUpMin', e.target.value)}
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label>Initial Ramp-up Max (°C/s)</label>
-                    <input 
-                      type="number" step="0.1"
-                      value={customThresholds.rampUpMax} 
-                      onChange={(e) => handleThresholdChange('rampUpMax', e.target.value)}
-                    />
-                  </div>
-                </div>
-
-                <div className="form-row">
-                  <div className="form-group">
-                    <label>Soak Duration Min (s)</label>
-                    <input 
-                      type="number" 
-                      value={customThresholds.soakDurationMin} 
-                      onChange={(e) => handleThresholdChange('soakDurationMin', e.target.value)}
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label>Soak Duration Max (s)</label>
-                    <input 
-                      type="number" 
-                      value={customThresholds.soakDurationMax} 
-                      onChange={(e) => handleThresholdChange('soakDurationMax', e.target.value)}
-                    />
-                  </div>
-                </div>
-
-                <div className="form-row">
-                  <div className="form-group">
-                    <label>Reflow Ramp-up Min (°C/s)</label>
-                    <input 
-                      type="number" step="0.1"
-                      value={customThresholds.reflowRampUpMin} 
-                      onChange={(e) => handleThresholdChange('reflowRampUpMin', e.target.value)}
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label>Reflow Ramp-up Max (°C/s)</label>
-                    <input 
-                      type="number" step="0.1"
-                      value={customThresholds.reflowRampUpMax} 
-                      onChange={(e) => handleThresholdChange('reflowRampUpMax', e.target.value)}
-                    />
-                  </div>
-                </div>
-
-                <div className="form-row">
-                  <div className="form-group">
-                    <label>TAL Duration Min (s)</label>
-                    <input 
-                      type="number" 
-                      value={customThresholds.talMin} 
-                      onChange={(e) => handleThresholdChange('talMin', e.target.value)}
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label>TAL Duration Max (s)</label>
-                    <input 
-                      type="number" 
-                      value={customThresholds.talMax} 
-                      onChange={(e) => handleThresholdChange('talMax', e.target.value)}
-                    />
-                  </div>
-                </div>
-
-                <div className="form-row">
-                  <div className="form-group">
-                    <label>Peak Temp Min (°C)</label>
-                    <input 
-                      type="number" 
-                      value={customThresholds.peakTempMin} 
-                      onChange={(e) => handleThresholdChange('peakTempMin', e.target.value)}
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label>Peak Temp Max (°C)</label>
-                    <input 
-                      type="number" 
-                      value={customThresholds.peakTempMax} 
-                      onChange={(e) => handleThresholdChange('peakTempMax', e.target.value)}
-                    />
-                  </div>
-                </div>
-
-                <div className="form-row">
-                  <div className="form-group">
-                    <label>Cooling Rate Min (°C/s)</label>
-                    <input 
-                      type="number" step="0.1"
-                      value={customThresholds.coolingMin} 
-                      onChange={(e) => handleThresholdChange('coolingMin', e.target.value)}
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label>Cooling Rate Max (°C/s)</label>
-                    <input 
-                      type="number" step="0.1"
-                      value={customThresholds.coolingMax} 
-                      onChange={(e) => handleThresholdChange('coolingMax', e.target.value)}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Scale Mode */}
-              <div className="panel-card">
-                <div className="panel-label">차트 축 스케일 모드</div>
-                <div className="scale-switcher">
-                  <button 
-                    className={scaleMode === 'standard' ? 'active' : ''} 
-                    onClick={() => setScaleMode('standard')}
-                  >
-                    Standard (0~480s / 300°C)
-                  </button>
-                  <button 
-                    className={scaleMode === 'auto-fit' ? 'active' : ''} 
-                    onClick={() => setScaleMode('auto-fit')}
-                  >
-                    Auto-Fit 동적 리사이즈
-                  </button>
-                </div>
-              </div>
-
-              {/* Export Panel */}
-              <div className="panel-card">
-                <div className="panel-label">차트 이미지 고화질 내보내기</div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-                  <button onClick={() => handleExport('image/png')} className="icon-btn">
-                    <Download size={13} style={{ marginRight: 4 }} />
-                    PNG 저장
-                  </button>
-                  <button onClick={() => handleExport('image/jpeg')} className="icon-btn">
-                    <Download size={13} style={{ marginRight: 4 }} />
-                    JPEG 저장
-                  </button>
-                </div>
-              </div>
+              )}
             </div>
 
-            {/* COLUMN 2: CENTER PANEL (Chart & Header Details - Screen and Print) */}
-            <div className="center-panel">
+            {data.length > 0 ? (
+              <>
+                {/* COLUMN 2: CENTER PANEL (Chart & Header Details - Screen and Print) */}
+                <div className="center-panel">
               
               {/* Printed Header Area (Print Only) */}
               <div className="print-report-header">
@@ -840,10 +1095,12 @@ const App: React.FC = () => {
                   <div className="sidebar-subtitle">공정 구간 적합성 스코어</div>
                   {[
                     analysisResult.rampUp,
+                    analysisResult.rampUpTime,
                     analysisResult.soakDuration,
                     analysisResult.reflowRampUp,
                     analysisResult.tal,
                     analysisResult.peakTemp,
+                    analysisResult.timeAtPeak,
                     analysisResult.cooling
                   ].map((metric, idx) => (
                     <div key={idx} className={`metric-score-card border-${metric.status.toLowerCase()}`}>
@@ -944,32 +1201,32 @@ const App: React.FC = () => {
                   </div>
                 </form>
               </div>
+              </div>
 
-            </div>
-
+            </>
+            ) : (
+              /* Empty Workspace / Standard Load Screen */
+              <div className="empty-workspace" style={{ flex: 1, backgroundColor: 'var(--bg-primary)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                <Upload size={54} color="#3b82f6" style={{ marginBottom: 16 }} />
+                <h2>Semiconductor Reflow Profile Analyzer</h2>
+                <p>
+                  본 분석 도구는 SMT 반도체 패키징 공정 내 솔더 접합부 신뢰성 확보를 위해 5대 핵심 구간의 물리적 지표
+                  (승온/냉각 속도, 예열 유지 시간, TAL, 최고 온도)를 실시간 연산하고 안전 한계를 검증합니다.
+                  온도 로그 데이터 파일(.csv, .xlsx)을 업로드하거나 샘플 데모 데이터를 로드하여 분석을 시작하십시오.
+                </p>
+                <div className="empty-buttons">
+                  <button className="primary" onClick={() => document.getElementById('fileInput')?.click()}>
+                    <Upload size={14} style={{ marginRight: 6 }} />
+                    데이터 파일 불러오기
+                  </button>
+                  <button onClick={loadDemoData}>
+                    <FileSpreadsheet size={14} style={{ marginRight: 6 }} />
+                    샘플 데모 데이터 로드
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
-        ) : (
-          /* Empty Workspace / Standard Load Screen */
-          <div className="empty-workspace">
-            <Upload size={54} color="#3b82f6" style={{ marginBottom: 16 }} />
-            <h2>Semiconductor Reflow Profile Analyzer</h2>
-            <p>
-              본 분석 도구는 SMT 반도체 패키징 공정 내 솔더 접합부 신뢰성 확보를 위해 5대 핵심 구간의 물리적 지표
-              (승온/냉각 속도, 예열 유지 시간, TAL, 최고 온도)를 실시간 연산하고 안전 한계를 검증합니다.
-              온도 로그 CSV 파일을 업로드하거나 샘플 데모 데이터를 로드하여 분석을 시작하십시오.
-            </p>
-            <div className="empty-buttons">
-              <button className="primary" onClick={() => document.getElementById('fileInput')?.click()}>
-                <Upload size={14} style={{ marginRight: 6 }} />
-                CSV 파일 불러오기
-              </button>
-              <button onClick={loadDemoData}>
-                <FileSpreadsheet size={14} style={{ marginRight: 6 }} />
-                샘플 데모 데이터 로드
-              </button>
-            </div>
-          </div>
-        )}
       </main>
     </>
   );

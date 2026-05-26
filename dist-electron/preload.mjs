@@ -1,0 +1,1 @@
+let e=require(`electron`);e.contextBridge.exposeInMainWorld(`electronAPI`,{getCsvFiles:()=>e.ipcRenderer.invoke(`get-csv-files`),readCsvFile:t=>e.ipcRenderer.invoke(`read-csv-file`,t),selectCsvDirectory:()=>e.ipcRenderer.invoke(`select-csv-directory`)});

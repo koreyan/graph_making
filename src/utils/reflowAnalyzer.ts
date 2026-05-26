@@ -16,10 +16,12 @@ export interface MetricEvaluation {
 export interface ReflowAnalysisResult {
   solderType: SolderType;
   rampUp: MetricEvaluation;
+  rampUpTime: MetricEvaluation;
   soakDuration: MetricEvaluation;
   reflowRampUp: MetricEvaluation;
   tal: MetricEvaluation;
   peakTemp: MetricEvaluation;
+  timeAtPeak: MetricEvaluation;
   cooling: MetricEvaluation;
   overallStatus: 'PASS' | 'FAIL' | 'WARNING';
 }
@@ -30,6 +32,8 @@ export interface SolderThresholds {
   liquidusTemp: number;
   rampUpMin: number;
   rampUpMax: number;
+  rampUpTimeMin: number;
+  rampUpTimeMax: number;
   soakDurationMin: number;
   soakDurationMax: number;
   reflowRampUpMin: number;
@@ -38,6 +42,8 @@ export interface SolderThresholds {
   talMax: number;
   peakTempMin: number;
   peakTempMax: number;
+  timeAtPeakMin: number;
+  timeAtPeakMax: number;
   coolingMin: number; // e.g. -4.0 (fastest cooling limit)
   coolingMax: number; // e.g. -1.0 (slowest cooling limit)
 }
@@ -49,6 +55,8 @@ export const THRESHOLDS: Record<SolderType, SolderThresholds> = {
     liquidusTemp: 217,
     rampUpMin: 1.0,
     rampUpMax: 3.0,
+    rampUpTimeMin: 40,
+    rampUpTimeMax: 120,
     soakDurationMin: 60,
     soakDurationMax: 120,
     reflowRampUpMin: 1.0,
@@ -57,6 +65,8 @@ export const THRESHOLDS: Record<SolderType, SolderThresholds> = {
     talMax: 90,
     peakTempMin: 235,
     peakTempMax: 250,
+    timeAtPeakMin: 15,
+    timeAtPeakMax: 30,
     coolingMin: -4.0,
     coolingMax: -1.0,
   },
@@ -66,6 +76,8 @@ export const THRESHOLDS: Record<SolderType, SolderThresholds> = {
     liquidusTemp: 183,
     rampUpMin: 1.0,
     rampUpMax: 3.0,
+    rampUpTimeMin: 40,
+    rampUpTimeMax: 120,
     soakDurationMin: 60,
     soakDurationMax: 120,
     reflowRampUpMin: 1.0,
@@ -74,6 +86,8 @@ export const THRESHOLDS: Record<SolderType, SolderThresholds> = {
     talMax: 90,
     peakTempMin: 210,
     peakTempMax: 230,
+    timeAtPeakMin: 15,
+    timeAtPeakMax: 30,
     coolingMin: -4.0,
     coolingMax: -1.0,
   },
@@ -105,14 +119,18 @@ export const analyzeReflowProfile = (
     }
   }
 
-  // 1. Initial Ramp-Up Rate (Ambient to Soak Start Temp)
+  // 1. Initial Ramp-Up Rate and Time (Ambient to Soak Start Temp)
   const pStart = points[0];
   const pSoakStart = points.find(d => d.temp2 >= thresholds.soakStartTemp);
   let rampUpRate: number | null = null;
+  let rampUpTimeVal: number | null = null;
   let rampUpStatus: 'PASS' | 'FAIL' | 'WARNING' = 'FAIL';
   let rampUpMsg = '데이터 부족';
+  
   if (pSoakStart && pSoakStart.time > pStart.time) {
-    rampUpRate = (pSoakStart.temp2 - pStart.temp2) / (pSoakStart.time - pStart.time);
+    rampUpTimeVal = pSoakStart.time - pStart.time;
+    rampUpRate = (pSoakStart.temp2 - pStart.temp2) / rampUpTimeVal;
+    
     if (rampUpRate >= thresholds.rampUpMin && rampUpRate <= thresholds.rampUpMax) {
       rampUpStatus = 'PASS';
       rampUpMsg = 'Initial ramp-up rate is within the optimal range.';
@@ -122,6 +140,21 @@ export const analyzeReflowProfile = (
     } else {
       rampUpStatus = 'WARNING';
       rampUpMsg = '⚠️ Insufficient ramp-up! Low productivity or early flux exhaustion risk.';
+    }
+  }
+
+  let rampUpTimeStatus: 'PASS' | 'FAIL' | 'WARNING' = 'FAIL';
+  let rampUpTimeMsg = '데이터 부족';
+  if (rampUpTimeVal !== null) {
+    if (rampUpTimeVal >= thresholds.rampUpTimeMin && rampUpTimeVal <= thresholds.rampUpTimeMax) {
+      rampUpTimeStatus = 'PASS';
+      rampUpTimeMsg = 'Initial ramp-up time is within optimal range.';
+    } else if (rampUpTimeVal > thresholds.rampUpTimeMax) {
+      rampUpTimeStatus = 'WARNING';
+      rampUpTimeMsg = '⚠️ Ramp-up time too long! Productivity decrease and possible early flux drying.';
+    } else {
+      rampUpTimeStatus = 'FAIL';
+      rampUpTimeMsg = '⚠️ Ramp-up time too short! Risk of severe thermal shock to components.';
     }
   }
 
@@ -160,6 +193,30 @@ export const analyzeReflowProfile = (
   } else {
     peakStatus = 'FAIL';
     peakMsg = '⚠️ Peak temperature too low! Incomplete melting, leading to low mechanical strength and cold joints.';
+  }
+
+  // Time at Peak (Peak - 5°C limit)
+  let timeAtPeakVal: number | null = null;
+  let timeAtPeakStatus: 'PASS' | 'FAIL' | 'WARNING' = 'FAIL';
+  let timeAtPeakMsg = '데이터 부족';
+
+  const peakMinus5 = peakT - 5;
+  const reversedPoints = [...points].reverse();
+  const pPeakStart = points.find(d => d.temp2 >= peakMinus5);
+  const pPeakEnd = reversedPoints.find(d => d.temp2 >= peakMinus5);
+  
+  if (pPeakStart && pPeakEnd && pPeakEnd.time >= pPeakStart.time) {
+    timeAtPeakVal = pPeakEnd.time - pPeakStart.time;
+    if (timeAtPeakVal >= thresholds.timeAtPeakMin && timeAtPeakVal <= thresholds.timeAtPeakMax) {
+      timeAtPeakStatus = 'PASS';
+      timeAtPeakMsg = 'Optimal time at peak achieved. Excellent IMC formation.';
+    } else if (timeAtPeakVal > thresholds.timeAtPeakMax) {
+      timeAtPeakStatus = 'FAIL';
+      timeAtPeakMsg = '⚠️ Time at peak too long! Component thermal damage or overly brittle IMC layer growth expected.';
+    } else {
+      timeAtPeakStatus = 'WARNING';
+      timeAtPeakMsg = '⚠️ Time at peak too short! IMC might be too thin, reducing mechanical joint strength.';
+    }
   }
 
   // 3. Ramp-up to Peak Rate (Soak End Temp to Peak)
@@ -232,7 +289,7 @@ export const analyzeReflowProfile = (
   }
 
   // Calculate Overall Status
-  const statuses = [rampUpStatus, soakStatus, reflowRampUpStatus, talStatus, peakStatus, coolingStatus];
+  const statuses = [rampUpStatus, rampUpTimeStatus, soakStatus, reflowRampUpStatus, talStatus, peakStatus, timeAtPeakStatus, coolingStatus];
   let overallStatus: 'PASS' | 'FAIL' | 'WARNING' = 'PASS';
   if (statuses.includes('FAIL')) {
     overallStatus = 'FAIL';
@@ -253,6 +310,16 @@ export const analyzeReflowProfile = (
       maxLimit: thresholds.rampUpMax,
       description: `상온에서 예열 시작 온도(${thresholds.soakStartTemp}°C)까지의 상승 속도`,
       message: rampUpMsg,
+    },
+    rampUpTime: {
+      name: '초기 승온 시간 (Ramp-up Time)',
+      value: rampUpTimeVal,
+      unit: 's',
+      status: rampUpTimeStatus,
+      minLimit: thresholds.rampUpTimeMin,
+      maxLimit: thresholds.rampUpTimeMax,
+      description: `상온에서 예열 시작 온도(${thresholds.soakStartTemp}°C)에 도달할 때까지 소요된 총 시간`,
+      message: rampUpTimeMsg,
     },
     soakDuration: {
       name: '예열 소크 시간 (Preheat / Soak Time)',
@@ -293,6 +360,16 @@ export const analyzeReflowProfile = (
       maxLimit: thresholds.peakTempMax,
       description: '전체 프로파일에서 측정된 열전쌍(TC2)의 최고점 온도',
       message: peakMsg,
+    },
+    timeAtPeak: {
+      name: '피크 지속 시간 (Time at Peak)',
+      value: timeAtPeakVal,
+      unit: 's',
+      status: timeAtPeakStatus,
+      minLimit: thresholds.timeAtPeakMin,
+      maxLimit: thresholds.timeAtPeakMax,
+      description: `최고 피크 온도에서 -5°C 이내 고온 영역에 머문 시간`,
+      message: timeAtPeakMsg,
     },
     cooling: {
       name: '하강 냉각 속도 (Cooling Rate)',

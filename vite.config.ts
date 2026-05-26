@@ -11,6 +11,9 @@ export default defineConfig({
         // Electron main process entry point
         entry: 'electron/main.ts',
       },
+      preload: {
+        input: 'electron/preload.ts',
+      },
     }),
   ],
   // Prevent Vite from clearing the screen during Electron dev mode
