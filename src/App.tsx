@@ -112,6 +112,9 @@ const App: React.FC = () => {
   // Interactive custom annotations state
   const [customAnnotations, setCustomAnnotations] = useState<Array<{ id: string; x: number; y: number; text: string }>>([]);
 
+  // PDF Preview State
+  const [pdfPreviewMode, setPdfPreviewMode] = useState(false);
+
   // Manual annotation inputs state
   const [manualAnnX, setManualAnnX] = useState<string>('');
   const [manualAnnY, setManualAnnY] = useState<string>('');
@@ -358,6 +361,8 @@ const App: React.FC = () => {
 
   // Print PDF report triggering
   const handlePrint = async () => {
+    setPdfPreviewMode(true);
+    
     // 1. Prepare print styles dynamically to bypass media query limitations of html2canvas
     let printStyles = '';
     try {
@@ -379,9 +384,9 @@ const App: React.FC = () => {
     const styleEl = document.createElement("style");
     styleEl.id = "temp-print-styles";
     styleEl.innerHTML = printStyles;
-    // Also explicitly force hide sidebars and controls
+    // Explicitly hide sidebars and original header, but KEEP the preview header visible
     styleEl.innerHTML += `
-      header, .screen-only, .left-sidebar, .right-sidebar, .controls, button { display: none !important; }
+      header.screen-only, .left-sidebar, .right-sidebar, .controls { display: none !important; }
       .center-panel { width: 100% !important; max-width: 100% !important; background: #fff !important; }
       .graph-section { width: 100% !important; max-width: 100% !important; background: #fff !important; }
     `;
@@ -406,9 +411,14 @@ const App: React.FC = () => {
         }
       }, true);
     }
+  };
+
+  const handleDownloadPDF = async () => {
+    const controlsEl = document.getElementById('pdf-preview-controls');
+    if (controlsEl) controlsEl.style.display = 'none';
 
     // 3. Wait for render
-    await new Promise(resolve => setTimeout(resolve, 800));
+    await new Promise(resolve => setTimeout(resolve, 300));
 
     // 4. Capture and Export
     const element = document.querySelector('.workspace-console') as HTMLElement;
@@ -433,9 +443,16 @@ const App: React.FC = () => {
         element.style.width = origWidth;
       }
     }
+  };
 
+  const cancelPdfPreview = () => {
+    setPdfPreviewMode(false);
+    
     // 5. Cleanup
-    document.head.removeChild(styleEl);
+    const styleEl = document.getElementById("temp-print-styles");
+    if (styleEl) document.head.removeChild(styleEl);
+    
+    const activeChart = Highcharts.charts.find(c => c !== undefined);
     if (activeChart) {
       activeChart.update({
         chart: { backgroundColor: '#16161a' },
@@ -510,7 +527,7 @@ const App: React.FC = () => {
   return (
     <>
       {/* 1. Header (Screen Only) */}
-      <header className="screen-only">
+      <header className="screen-only" style={{ display: pdfPreviewMode ? 'none' : 'flex' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <div className="title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <Thermometer size={22} color="#3b82f6" />
@@ -529,7 +546,7 @@ const App: React.FC = () => {
           <input 
             id="fileInput" 
             type="file" 
-            accept=".csv" 
+            accept=".csv, .xlsx" 
             style={{ display: 'none' }} 
             onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0])}
           />
@@ -542,6 +559,25 @@ const App: React.FC = () => {
         </div>
       </header>
 
+      {/* PDF Preview Mode Header */}
+      {pdfPreviewMode && (
+        <div id="pdf-preview-header" style={{ 
+          display: 'flex', justifyContent: 'space-between', padding: '12px 24px', 
+          background: '#24242b', borderBottom: '1px solid #333',
+          flexShrink: 0, minHeight: '56px', zIndex: 1000
+        }}>
+          <div style={{ color: '#fff', display: 'flex', alignItems: 'center', fontWeight: 'bold' }}>
+            PDF 미리보기 모드 (다운로드를 눌러야 최종 저장됩니다)
+          </div>
+          <div style={{ display: 'flex', gap: '12px' }}>
+            <button onClick={cancelPdfPreview} style={{ backgroundColor: '#4b5563', color: '#fff', display: 'block' }}>뒤로가기 (취소)</button>
+            <button className="primary" onClick={handleDownloadPDF} style={{ display: 'flex', alignItems: 'center' }}>
+              <Download size={16} style={{ marginRight: 6 }} /> 다운로드 시작
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* 2. Main Application Area */}
       <main onDrop={onDrop} onDragOver={onDragOver} onDragLeave={onDragLeave}>
         
@@ -551,10 +587,12 @@ const App: React.FC = () => {
           <p>여기에 온도 데이터 파일(.csv, .xlsx)을 드롭하세요</p>
         </div>
 
-        <div className="workspace-console" style={{ gridTemplateColumns: data.length > 0 ? '310px 1fr 360px' : '310px 1fr' }}>
+        <div className="workspace-console" style={{ 
+          gridTemplateColumns: pdfPreviewMode ? '1fr' : (data.length > 0 ? '310px 1fr 360px' : '310px 1fr')
+        }}>
           
           {/* COLUMN 1: LEFT SIDEBAR (Controls & Form - Screen Only) */}
-          <div className="left-sidebar screen-only">
+          <div className="left-sidebar screen-only" style={{ display: pdfPreviewMode ? 'none' : 'flex' }}>
               
               <div className="sidebar-tabs">
                 <button 
@@ -910,10 +948,10 @@ const App: React.FC = () => {
               )}
             </div>
 
-            {data.length > 0 ? (
-              <>
-                {/* COLUMN 2: CENTER PANEL (Chart & Header Details - Screen and Print) */}
-                <div className="center-panel">
+          {data.length > 0 ? (
+            <>
+              {/* COLUMN 2: CENTER PANEL (Chart & Header Details - Screen and Print) */}
+              <div className="center-panel">
               
               {/* Printed Header Area (Print Only) */}
               <div className="print-report-header">
@@ -927,15 +965,15 @@ const App: React.FC = () => {
                   <div className="dataset-metadata-banner">
                     <div className="meta-card">
                       <span className="meta-lbl">장비 모델명</span>
-                      <span className="meta-val">{meta.deviceName}</span>
+                      <span className="meta-val">{meta.deviceName === 'Unknown' ? '' : meta.deviceName}</span>
                     </div>
                     <div className="meta-card">
                       <span className="meta-lbl">일련 번호</span>
-                      <span className="meta-val">{meta.serialNumber}</span>
+                      <span className="meta-val">{meta.serialNumber === 'Unknown' ? '' : meta.serialNumber}</span>
                     </div>
                     <div className="meta-card">
                       <span className="meta-lbl">기기 고유 ID</span>
-                      <span className="meta-val">{meta.deviceId}</span>
+                      <span className="meta-val">{meta.deviceId === 'Unknown' ? '' : meta.deviceId}</span>
                     </div>
                     <div className="meta-card screen-only">
                       <span className="meta-lbl">데이터 크기</span>
@@ -972,10 +1010,10 @@ const App: React.FC = () => {
               {meta && (
                 <div className="print-metadata-grid">
                   <div className="print-meta-col">
-                    <p><b>기기 모델명:</b> {meta.deviceName}</p>
-                    <p><b>기기 설명:</b> {meta.deviceDescription || 'N/A'}</p>
-                    <p><b>일련 번호:</b> {meta.serialNumber}</p>
-                    <p><b>기기 고유 ID:</b> {meta.deviceId}</p>
+                    <p><b>기기 모델명:</b> {meta.deviceName === 'Unknown' ? '' : meta.deviceName}</p>
+                    <p><b>기기 설명:</b> {meta.deviceDescription === 'Unknown' || !meta.deviceDescription ? '' : meta.deviceDescription}</p>
+                    <p><b>일련 번호:</b> {meta.serialNumber === 'Unknown' ? '' : meta.serialNumber}</p>
+                    <p><b>기기 고유 ID:</b> {meta.deviceId === 'Unknown' ? '' : meta.deviceId}</p>
                   </div>
                   <div className="print-meta-col">
                     <p><b>솔더 성분/화학 조성비:</b> {solderComposition}</p>
@@ -1044,22 +1082,12 @@ const App: React.FC = () => {
                       ))}
                     </tbody>
                   </table>
-                  
-                  {/* Signature Section for Print */}
-                  <div className="print-signature-section">
-                    <div className="signature-box">
-                      <p>공정 담당 엔지니어 서명: ________________________</p>
-                    </div>
-                    <div className="signature-box">
-                      <p>라인 관리 및 승인 책임자 서명: ________________________</p>
-                    </div>
-                  </div>
                 </div>
               )}
             </div>
 
             {/* COLUMN 3: RIGHT INSIGHT SIDEBAR (Scorecard, Warnings, Custom Notes - Screen Only) */}
-            <div className="right-sidebar screen-only">
+            <div className="right-sidebar screen-only" style={{ display: pdfPreviewMode ? 'none' : 'flex' }}>
               
               {/* Overall Status Card */}
               {analysisResult && (
@@ -1201,7 +1229,7 @@ const App: React.FC = () => {
                   </div>
                 </form>
               </div>
-              </div>
+            </div>
 
             </>
             ) : (

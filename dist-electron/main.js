@@ -16454,7 +16454,14 @@ process.platform === "win32" && t.setAppUserModelId("com.reflowconsole.app"), t.
 	}), r.handle("read-csv-file", async (e, t) => {
 		try {
 			if (t.toLowerCase().endsWith(".xlsx")) {
-				let e = um(t), n = e.SheetNames[0];
+				let e = um(t), n = e.SheetNames[0], r = 0;
+				for (let t of e.SheetNames) {
+					let i = e.Sheets[t];
+					if (i["!ref"]) {
+						let e = Am.decode_range(i["!ref"]), a = e.e.r - e.s.r;
+						a > r && (r = a, n = t);
+					}
+				}
 				return { content: Am.sheet_to_csv(e.Sheets[n]) };
 			}
 			let e = a.readFileSync(t, "utf-8");

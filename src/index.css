@@ -785,7 +785,7 @@ main {
   }
 
   /* Hide header and interactive sidebar console entirely */
-  header, .screen-only, .left-sidebar, .right-sidebar, .controls, button, .drop-zone, .empty-workspace {
+  header.screen-only, .left-sidebar, .right-sidebar, .controls, button.screen-only, .drop-zone, .empty-workspace {
     display: none !important;
   }
 
@@ -909,24 +909,5 @@ main {
 
   .print-table tr:nth-child(even) {
     background-color: #f9fafb !important;
-  }
-
-  /* Printable signature lines */
-  .print-signature-section {
-    display: flex !important;
-    justify-content: space-between;
-    margin-top: 30px !important;
-    page-break-inside: avoid;
-  }
-
-  .signature-box {
-    width: 45% !important;
-    border-top: 1px solid #000000 !important;
-    padding-top: 6px !important;
-  }
-
-  .signature-box p {
-    font-size: 9pt !important;
-    color: #111111 !important;
   }
 }

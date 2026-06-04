@@ -2,7 +2,7 @@ import { app, BrowserWindow, shell, ipcMain, dialog } from 'electron';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import * as XLSX from 'xlsx';
+import { readFile, utils } from 'xlsx';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -100,9 +100,23 @@ app.whenReady().then(() => {
   ipcMain.handle('read-csv-file', async (_, filepath: string) => {
     try {
       if (filepath.toLowerCase().endsWith('.xlsx')) {
-        const workbook = XLSX.readFile(filepath);
-        const sheetName = workbook.SheetNames[0];
-        const csvContent = XLSX.utils.sheet_to_csv(workbook.Sheets[sheetName]);
+        const workbook = readFile(filepath);
+        let targetSheetName = workbook.SheetNames[0];
+        let maxRows = 0;
+        
+        for (const name of workbook.SheetNames) {
+          const sheet = workbook.Sheets[name];
+          if (sheet['!ref']) {
+            const range = utils.decode_range(sheet['!ref']);
+            const rowCount = range.e.r - range.s.r;
+            if (rowCount > maxRows) {
+              maxRows = rowCount;
+              targetSheetName = name;
+            }
+          }
+        }
+        
+        const csvContent = utils.sheet_to_csv(workbook.Sheets[targetSheetName]);
         return { content: csvContent };
       }
 
