@@ -2,7 +2,7 @@ import { app, BrowserWindow, shell, ipcMain, dialog } from 'electron';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { readFile, utils } from 'xlsx';
+import { read, utils } from 'xlsx';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -100,7 +100,8 @@ app.whenReady().then(() => {
   ipcMain.handle('read-csv-file', async (_, filepath: string) => {
     try {
       if (filepath.toLowerCase().endsWith('.xlsx')) {
-        const workbook = readFile(filepath);
+        const fileBuffer = fs.readFileSync(filepath);
+        const workbook = read(fileBuffer, { type: 'buffer' });
         let targetSheetName = workbook.SheetNames[0];
         let maxRows = 0;
         
